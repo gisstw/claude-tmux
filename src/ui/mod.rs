@@ -138,6 +138,18 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(header, area);
 }
 
+/// Compact, fixed-width-ish idle duration: "12s", "3m", "2h05m".
+fn format_idle(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
+    }
+}
+
 fn render_session_list(frame: &mut Frame, app: &mut App, area: Rect) {
     // Compute scroll state values before borrowing for items
     let selected_index = app.compute_flat_list_index();
@@ -175,8 +187,22 @@ fn render_session_list(frame: &mut Frame, app: &mut App, area: Rect) {
         .max(10);
 
     let mut items: Vec<ListItem> = Vec::new();
+    let recache_boundary = app.recache_boundary();
 
     for (i, session) in filtered.iter().enumerate() {
+        // Header above the first session that has gone stale (idle past the cache TTL).
+        if recache_boundary == Some(i) {
+            let label = "─ 需要 recache（idle > 1h）";
+            let pad = (area.width as usize).saturating_sub(label.width());
+            items.push(
+                ListItem::new(Line::from(vec![Span::styled(
+                    format!("{}{}", label, "─".repeat(pad)),
+                    Style::default().fg(Color::Yellow),
+                )]))
+                .style(Style::default()),
+            );
+        }
+
         let is_selected = i == app.selected;
         let is_current = app
             .current_session
@@ -195,6 +221,20 @@ fn render_session_list(frame: &mut Frame, app: &mut App, area: Rect) {
             " "
         };
         let status = &session.claude_code_status;
+
+        // For idle sessions, append how long they have been idle (e.g. "idle 3m").
+        let status_label = if *status == ClaudeCodeStatus::Idle {
+            match session
+                .claude_code_pane
+                .as_deref()
+                .and_then(|id| app.idle_duration(id))
+            {
+                Some(dur) => format!("idle {}", format_idle(dur)),
+                None => status.label().to_string(),
+            }
+        } else {
+            status.label().to_string()
+        };
 
         // Use brighter colors when selected so text is readable on dark background
         let status_color = match (status, is_selected) {
@@ -275,7 +315,7 @@ fn render_session_list(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(status.symbol(), Style::default().fg(status_color)),
             Span::raw(" "),
             Span::styled(
-                format!("{:<8}", status.label()),
+                format!("{:<11}", status_label),
                 Style::default().fg(status_color),
             ),
             Span::raw("  "),

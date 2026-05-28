@@ -132,7 +132,7 @@ impl Tmux {
                 "-t",
                 session,
                 "-F",
-                "#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{window_index}\t#{window_name}",
+                "#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{window_index}\t#{window_name}\t#{pane_tty}",
             ])
             .output()
             .context("Failed to execute tmux list-panes")?;
@@ -146,13 +146,14 @@ impl Tmux {
 
         for line in stdout.lines() {
             let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 5 {
+            if parts.len() >= 6 {
                 panes.push(Pane {
                     id: parts[0].to_string(),
                     current_command: parts[1].to_string(),
                     current_path: PathBuf::from(parts[2]),
                     window_index: parts[3].to_string(),
                     window_name: parts[4].to_string(),
+                    tty: parts[5].to_string(),
                 });
             }
         }

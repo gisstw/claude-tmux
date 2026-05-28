@@ -10,7 +10,7 @@ mod helpers;
 mod mode;
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 
@@ -62,6 +62,10 @@ pub struct App {
     pane_content_cache: HashMap<String, String>,
     /// Timestamp of the last status tick
     last_status_tick: Instant,
+    /// Last time the Claude session in each pane was active (its transcript
+    /// mtime), keyed by pane ID. `now - this` = how long the session has been
+    /// idle, which is what drives the prompt-cache-freshness display.
+    last_active: HashMap<String, SystemTime>,
 }
 
 impl App {
@@ -91,6 +95,7 @@ impl App {
             scroll_state: ScrollState::new(),
             pane_content_cache: HashMap::new(),
             last_status_tick: Instant::now(),
+            last_active: HashMap::new(),
         };
 
         app.update_preview();
@@ -128,15 +133,25 @@ impl App {
         }
         self.last_status_tick = Instant::now();
 
-        // Collect (session_index, pane_id) first to satisfy the borrow checker.
-        let targets: Vec<(usize, String)> = self
+        // Collect (session_index, pane_id, claude pane tty) first to satisfy the
+        // borrow checker.
+        let targets: Vec<(usize, String, String)> = self
             .sessions
             .iter()
             .enumerate()
-            .filter_map(|(i, s)| s.claude_code_pane.as_ref().map(|id| (i, id.clone())))
+            .filter_map(|(i, s)| {
+                let pane_id = s.claude_code_pane.as_ref()?;
+                let tty = s
+                    .panes
+                    .iter()
+                    .find(|p| &p.id == pane_id)
+                    .map(|p| p.tty.clone())
+                    .unwrap_or_default();
+                Some((i, pane_id.clone(), tty))
+            })
             .collect();
 
-        for (idx, pane_id) in targets {
+        for (idx, pane_id, tty) in targets {
             let Ok(content) = Tmux::capture_pane(&pane_id, 15, true) else {
                 continue;
             };
@@ -151,8 +166,24 @@ impl App {
             };
 
             self.sessions[idx].claude_code_status = status;
+
+            // Record the session's last-active time (its transcript mtime) so the
+            // UI can show how long it has been idle. Absolute and independent of
+            // when this claude-tmux popup was opened.
+            if let Some(t) = crate::claude_session::last_activity_for_tty(&tty) {
+                self.last_active.insert(pane_id.clone(), t);
+            }
+
             self.pane_content_cache.insert(pane_id, content);
         }
+    }
+
+    /// How long the Claude session in `pane_id` has been idle: time since its
+    /// transcript was last written. `None` if we could not resolve the session.
+    pub fn idle_duration(&self, pane_id: &str) -> Option<Duration> {
+        SystemTime::now()
+            .duration_since(*self.last_active.get(pane_id)?)
+            .ok()
     }
 
     /// Clear any displayed messages
@@ -195,7 +226,7 @@ impl App {
 
     /// Get filtered sessions based on current filter
     pub fn filtered_sessions(&self) -> Vec<&Session> {
-        if self.filter.is_empty() {
+        let mut sessions: Vec<&Session> = if self.filter.is_empty() {
             self.sessions.iter().collect()
         } else {
             let filter_lower = self.filter.to_lowercase();
@@ -206,7 +237,34 @@ impl App {
                         || s.display_path().to_lowercase().contains(&filter_lower)
                 })
                 .collect()
-        }
+        };
+        // Sink sessions idle past the cache window to the bottom group, keeping
+        // the existing attached/name order within each group (stable sort).
+        sessions.sort_by_key(|s| self.needs_recache(s));
+        sessions
+    }
+
+    /// A session is "stale" once it has been idle longer than the prompt-cache
+    /// TTL, meaning continuing it would pay a full recache.
+    pub fn needs_recache(&self, session: &Session) -> bool {
+        const RECACHE_IDLE: Duration = Duration::from_secs(3600);
+        session
+            .claude_code_pane
+            .as_deref()
+            .and_then(|id| self.idle_duration(id))
+            .is_some_and(|d| d >= RECACHE_IDLE)
+    }
+
+    /// Index of the first stale (needs-recache) session in `filtered_sessions`,
+    /// i.e. the count of fresh sessions. `None` when no session is stale (so no
+    /// separator row is drawn).
+    pub fn recache_boundary(&self) -> Option<usize> {
+        let filtered = self.filtered_sessions();
+        let boundary = filtered
+            .iter()
+            .take_while(|s| !self.needs_recache(s))
+            .count();
+        (boundary < filtered.len()).then_some(boundary)
     }
 
     /// Get the currently selected session
@@ -1338,7 +1396,7 @@ impl App {
             return 0;
         }
 
-        match self.mode {
+        let index = match self.mode {
             Mode::ActionMenu => {
                 // Count items before selected session (1 row each)
                 let mut index = self.selected;
@@ -1374,6 +1432,13 @@ impl App {
                 // In non-ActionMenu modes, just the session index
                 self.selected
             }
+        };
+
+        // Account for the recache separator row when the selection sits in (or
+        // below) the stale group.
+        match self.recache_boundary() {
+            Some(boundary) if self.selected >= boundary => index + 1,
+            _ => index,
         }
     }
 
@@ -1386,7 +1451,7 @@ impl App {
             return 0;
         }
 
-        match self.mode {
+        let total = match self.mode {
             Mode::ActionMenu => {
                 // Base: one row per session
                 let mut total = filtered_count;
@@ -1417,6 +1482,9 @@ impl App {
                 total
             }
             _ => filtered_count,
-        }
+        };
+
+        // One extra row for the recache separator, when a stale group exists.
+        total + self.recache_boundary().is_some() as usize
     }
 }

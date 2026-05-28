@@ -51,6 +51,9 @@ pub struct Pane {
     pub window_index: String,
     /// Window name this pane belongs to
     pub window_name: String,
+    /// Controlling terminal of the pane (e.g. "/dev/pts/3"), used to map the
+    /// pane to its Claude Code session record.
+    pub tty: String,
 }
 
 /// A tmux session that may contain a Claude Code instance
