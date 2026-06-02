@@ -211,6 +211,7 @@ pub fn render_new_session_dialog(
     name: &str,
     path: &str,
     field: NewSessionField,
+    tool: crate::app::NewSessionTool,
     path_suggestions: &[String],
     path_selected: Option<usize>,
 ) {
@@ -225,7 +226,7 @@ pub fn render_new_session_dialog(
     } else {
         0
     };
-    let dialog_height = 8 + suggestions_to_show as u16 + suggestion_extra as u16;
+    let dialog_height = 10 + suggestions_to_show as u16 + suggestion_extra as u16;
 
     let area = centered_rect(60, dialog_height, frame.area());
 
@@ -326,6 +327,26 @@ pub fn render_new_session_dialog(
             Style::default().fg(Color::DarkGray),
         ));
     }
+
+    lines.push(Line::raw(""));
+
+    // Tool selector
+    let tool_style = if field == NewSessionField::Tool {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let (left_arrow, right_arrow) = if field == NewSessionField::Tool {
+        ("◀ ", " ▶")
+    } else {
+        ("  ", "  ")
+    };
+    lines.push(Line::from(vec![
+        Span::styled("Tool: ", tool_style),
+        Span::styled(left_arrow, Style::default().fg(Color::DarkGray)),
+        Span::styled(tool.label(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(right_arrow, Style::default().fg(Color::DarkGray)),
+    ]));
 
     lines.push(Line::raw(""));
     lines.push(Line::styled(

@@ -45,17 +45,20 @@ impl Tmux {
                 // Get panes for this session
                 let panes = Self::list_panes(&name).unwrap_or_default();
 
-                // Find every pane running claude
-                let claude_panes: Vec<&Pane> = panes
+                // Find every pane running a recognized tool
+                let tool_panes: Vec<(&Pane, crate::session::ToolType)> = panes
                     .iter()
-                    .filter(|p| p.current_command == "claude" || p.current_command.contains("claude"))
+                    .filter_map(|p| {
+                        crate::session::ToolType::from_command(&p.current_command)
+                            .map(|t| (p, t))
+                    })
                     .collect();
 
-                // Emit one Session row per claude pane. Sessions with zero
-                // claude panes still produce a single row with no claude info.
-                let multi = claude_panes.len() > 1;
+                // Emit one Session row per tool pane. Sessions with zero
+                // tool panes still produce a single row with no tool info.
+                let multi = tool_panes.len() > 1;
 
-                if claude_panes.is_empty() {
+                if tool_panes.is_empty() {
                     let working_directory = panes
                         .first()
                         .map(|p| p.current_path.clone())
@@ -71,23 +74,24 @@ impl Tmux {
                         panes: panes.clone(),
                         claude_code_pane: None,
                         claude_code_status: ClaudeCodeStatus::Unknown,
+                        tool_type: crate::session::ToolType::Claude,
                         window_label: None,
                         target_window_index: None,
                         git_context,
                     });
                 } else {
-                    for claude_pane in claude_panes {
-                        let status = Self::capture_pane(&claude_pane.id, 15, true)
+                    for (tool_pane, tool_type) in &tool_panes {
+                        let status = Self::capture_pane(&tool_pane.id, 15, true)
                             .map(|content| detect_status(&content))
                             .unwrap_or(ClaudeCodeStatus::Unknown);
 
-                        let working_directory = claude_pane.current_path.clone();
+                        let working_directory = tool_pane.current_path.clone();
                         let git_context = GitContext::detect(&working_directory);
 
                         let (window_label, target_window_index) = if multi {
                             (
-                                Some(claude_pane.window_name.clone()),
-                                Some(claude_pane.window_index.clone()),
+                                Some(tool_pane.window_name.clone()),
+                                Some(tool_pane.window_index.clone()),
                             )
                         } else {
                             (None, None)
@@ -100,8 +104,9 @@ impl Tmux {
                             working_directory,
                             window_count,
                             panes: panes.clone(),
-                            claude_code_pane: Some(claude_pane.id.clone()),
+                            claude_code_pane: Some(tool_pane.id.clone()),
                             claude_code_status: status,
+                            tool_type: *tool_type,
                             window_label,
                             target_window_index,
                             git_context,
@@ -226,7 +231,7 @@ impl Tmux {
     }
 
     /// Create a new tmux session
-    pub fn new_session(name: &str, path: &std::path::Path, start_claude: bool) -> Result<()> {
+    pub fn new_session(name: &str, path: &std::path::Path, tool: Option<crate::app::NewSessionTool>) -> Result<()> {
         let path_str = path.to_string_lossy();
 
         let status = Command::new("tmux")
@@ -238,10 +243,9 @@ impl Tmux {
             anyhow::bail!("Failed to create session {}", name);
         }
 
-        if start_claude {
-            // Send claude command to the new session
+        if let Some(tool) = tool {
             let _ = Command::new("tmux")
-                .args(["send-keys", "-t", name, "claude", "Enter"])
+                .args(["send-keys", "-t", name, tool.label(), "Enter"])
                 .status();
         }
 

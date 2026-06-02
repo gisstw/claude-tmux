@@ -21,6 +21,8 @@ pub enum Mode {
         name: String,
         path: String,
         field: NewSessionField,
+        /// Which AI tool to launch
+        tool: NewSessionTool,
         /// Path completion suggestions
         path_suggestions: Vec<String>,
         /// Currently selected path suggestion index
@@ -144,6 +146,42 @@ impl SessionAction {
 pub enum NewSessionField {
     Name,
     Path,
+    Tool,
+}
+
+/// Which AI tool to launch in the new session
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NewSessionTool {
+    #[default]
+    Claude,
+    Codex,
+    OpenCode,
+}
+
+impl NewSessionTool {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::OpenCode => "opencode",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Claude => Self::Codex,
+            Self::Codex => Self::OpenCode,
+            Self::OpenCode => Self::Claude,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Claude => Self::OpenCode,
+            Self::Codex => Self::Claude,
+            Self::OpenCode => Self::Codex,
+        }
+    }
 }
 
 /// Which field is active in the new worktree dialog

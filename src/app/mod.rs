@@ -22,7 +22,7 @@ use crate::tmux::Tmux;
 
 // Re-export types that are part of the public API
 pub use mode::{
-    CreatePullRequestField, Mode, NewSessionField, NewWorktreeField, SessionAction,
+    CreatePullRequestField, Mode, NewSessionField, NewSessionTool, NewWorktreeField, SessionAction,
 };
 
 // Use helpers internally
@@ -758,15 +758,16 @@ impl App {
             name: String::new(),
             path: default_path,
             field: NewSessionField::Name,
+            tool: NewSessionTool::Claude,
             path_suggestions: completion.suggestions,
             path_selected: None,
         };
     }
 
     /// Create the new session
-    pub fn confirm_new_session(&mut self, start_claude: bool) {
+    pub fn confirm_new_session(&mut self) {
         if let Mode::NewSession {
-            ref name, ref path, ..
+            ref name, ref path, tool, ..
         } = self.mode
         {
             if name.is_empty() {
@@ -778,7 +779,7 @@ impl App {
             let session_name = name.clone();
             let session_path = expand_path(path);
 
-            match Tmux::new_session(&session_name, &session_path, start_claude) {
+            match Tmux::new_session(&session_name, &session_path, Some(tool)) {
                 Ok(_) => {
                     self.refresh_sessions();
                     self.message = Some(format!("Created session '{}'", session_name));
@@ -1000,7 +1001,7 @@ impl App {
         ) {
             Ok(_) => {
                 // Create the session
-                match Tmux::new_session(&session_name, &worktree_path_buf, true) {
+                match Tmux::new_session(&session_name, &worktree_path_buf, Some(NewSessionTool::Claude)) {
                     Ok(_) => {
                         self.refresh_sessions();
                         self.message = Some(format!(

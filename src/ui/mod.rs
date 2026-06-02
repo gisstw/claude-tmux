@@ -54,6 +54,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             name,
             path,
             field,
+            tool,
             path_suggestions,
             path_selected,
         } => {
@@ -62,6 +63,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 name,
                 path,
                 *field,
+                *tool,
                 path_suggestions,
                 *path_selected,
             );
@@ -138,11 +140,11 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(header, area);
 }
 
-/// Compact, fixed-width-ish idle duration: "12s", "3m", "2h05m".
+/// Compact idle duration, minute granularity to avoid per-second flicker: "<1m", "3m", "2h05m".
 fn format_idle(d: std::time::Duration) -> String {
     let secs = d.as_secs();
     if secs < 60 {
-        format!("{}s", secs)
+        "<1m".to_string()
     } else if secs < 3600 {
         format!("{}m", secs / 60)
     } else {
@@ -312,11 +314,15 @@ fn render_session_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 name_style,
             ),
             Span::raw("  "),
-            Span::styled(status.symbol(), Style::default().fg(status_color)),
+            Span::styled(session.tool_type.symbol(), Style::default().fg(status_color)),
             Span::raw(" "),
             Span::styled(
                 format!("{:<11}", status_label),
                 Style::default().fg(status_color),
+            ),
+            Span::styled(
+                format!("{:<8}", session.duration()),
+                Style::default().fg(Color::DarkGray),
             ),
             Span::raw("  "),
             Span::styled(session.display_path(), Style::default().fg(path_color)),
@@ -594,7 +600,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::ActionMenu => "  jk navigate  ⏎/l select  h/esc back  q quit",
         Mode::Filter { .. } => "  ⏎ apply  esc cancel",
         Mode::ConfirmAction => "  y/⏎ confirm  n/esc cancel",
-        Mode::NewSession { .. } => "  ⏎ create  tab switch  ↑↓ select  → accept  esc cancel",
+        Mode::NewSession { .. } => "  ⏎ create  tab switch  ←→ tool  ↑↓/→ path  esc cancel",
         Mode::Rename { .. } => "  ⏎ confirm  esc cancel",
         Mode::Commit { .. } => "  ⏎ commit  esc cancel",
         Mode::NewWorktree { .. } => "  ⏎ create  tab switch  ↑↓ select  → accept  esc cancel",

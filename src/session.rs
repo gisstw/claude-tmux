@@ -38,6 +38,45 @@ impl ClaudeCodeStatus {
     }
 }
 
+/// Which AI tool is running in the pane
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolType {
+    #[default]
+    Claude,
+    Codex,
+    OpenCode,
+}
+
+impl ToolType {
+    pub fn from_command(cmd: &str) -> Option<Self> {
+        if cmd == "claude" || cmd.contains("claude") {
+            Some(Self::Claude)
+        } else if cmd == "codex" || cmd.contains("codex") {
+            Some(Self::Codex)
+        } else if cmd == "opencode" || cmd.contains("opencode") {
+            Some(Self::OpenCode)
+        } else {
+            None
+        }
+    }
+
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::Claude => "◆",
+            Self::Codex => "▣",
+            Self::OpenCode => "⬡",
+        }
+    }
+
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::OpenCode => "ocode",
+        }
+    }
+}
+
 /// A tmux pane within a session
 #[derive(Debug, Clone)]
 pub struct Pane {
@@ -76,6 +115,8 @@ pub struct Session {
     pub claude_code_pane: Option<String>,
     /// Status of Claude Code in this session
     pub claude_code_status: ClaudeCodeStatus,
+    /// Type of AI tool running in the detected pane (if any)
+    pub tool_type: ToolType,
     /// Window label to show next to the session name, used when a session
     /// has multiple claude panes and is shown as multiple rows.
     pub window_label: Option<String>,

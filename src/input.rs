@@ -161,16 +161,16 @@ fn handle_new_session_mode(app: &mut App, key: KeyEvent) {
             app.cancel();
         }
         KeyCode::Tab => {
-            // Toggle between name and path fields
             if let Mode::NewSession { ref mut field, .. } = app.mode {
                 *field = match field {
                     NewSessionField::Name => NewSessionField::Path,
-                    NewSessionField::Path => NewSessionField::Name,
+                    NewSessionField::Path => NewSessionField::Tool,
+                    NewSessionField::Tool => NewSessionField::Name,
                 };
             }
         }
         KeyCode::Enter => {
-            app.confirm_new_session(true); // Start claude by default
+            app.confirm_new_session();
         }
         // Path completion navigation (only when path field is active)
         KeyCode::Up if current_field == NewSessionField::Path => {
@@ -182,6 +182,16 @@ fn handle_new_session_mode(app: &mut App, key: KeyEvent) {
         // Accept completion with Right arrow (only when path field is active)
         KeyCode::Right if current_field == NewSessionField::Path => {
             app.accept_new_session_path_completion();
+        }
+        KeyCode::Left if current_field == NewSessionField::Tool => {
+            if let Mode::NewSession { ref mut tool, .. } = app.mode {
+                *tool = tool.prev();
+            }
+        }
+        KeyCode::Right if current_field == NewSessionField::Tool => {
+            if let Mode::NewSession { ref mut tool, .. } = app.mode {
+                *tool = tool.next();
+            }
         }
         KeyCode::Backspace => {
             if let Mode::NewSession {
@@ -200,6 +210,7 @@ fn handle_new_session_mode(app: &mut App, key: KeyEvent) {
                         path.pop();
                         *path_selected = None; // Reset selection on edit
                     }
+                    NewSessionField::Tool => {}
                 }
             }
             if current_field == NewSessionField::Path {
@@ -226,6 +237,7 @@ fn handle_new_session_mode(app: &mut App, key: KeyEvent) {
                         path.push(c);
                         *path_selected = None; // Reset selection on edit
                     }
+                    NewSessionField::Tool => {}
                 }
             }
             if current_field == NewSessionField::Path {
