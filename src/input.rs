@@ -183,12 +183,14 @@ fn handle_new_session_mode(app: &mut App, key: KeyEvent) {
         KeyCode::Right if current_field == NewSessionField::Path => {
             app.accept_new_session_path_completion();
         }
-        KeyCode::Left if current_field == NewSessionField::Tool => {
+        // Left always cycles tool (no other use for Left in any field)
+        KeyCode::Left => {
             if let Mode::NewSession { ref mut tool, .. } = app.mode {
                 *tool = tool.prev();
             }
         }
-        KeyCode::Right if current_field == NewSessionField::Tool => {
+        // Right cycles tool when not on Path (Path uses Right for completion)
+        KeyCode::Right if current_field != NewSessionField::Path => {
             if let Mode::NewSession { ref mut tool, .. } = app.mode {
                 *tool = tool.next();
             }

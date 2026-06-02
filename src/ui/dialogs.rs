@@ -350,7 +350,7 @@ pub fn render_new_session_dialog(
 
     lines.push(Line::raw(""));
     lines.push(Line::styled(
-        "Tab switch  ↑↓ select  → accept  Enter create  Esc cancel",
+        "←→ tool  Tab switch  ↑↓/→ path  Enter create  Esc cancel",
         Style::default().fg(Color::DarkGray),
     ));
 
