@@ -56,6 +56,11 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) {
             app.start_kill();
         }
 
+        // Mark/unmark session as done
+        KeyCode::Char('m') => {
+            app.toggle_mark();
+        }
+
         // Rename session
         KeyCode::Char('r') => {
             app.start_rename();

@@ -190,6 +190,7 @@ fn render_session_list(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut items: Vec<ListItem> = Vec::new();
     let recache_boundary = app.recache_boundary();
+    let marked_boundary = app.marked_boundary();
 
     for (i, session) in filtered.iter().enumerate() {
         // Header above the first session that has gone stale (idle past the cache TTL).
@@ -200,6 +201,19 @@ fn render_session_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 ListItem::new(Line::from(vec![Span::styled(
                     format!("{}{}", label, "─".repeat(pad)),
                     Style::default().fg(Color::Yellow),
+                )]))
+                .style(Style::default()),
+            );
+        }
+
+        // Header above the first marked (done) session.
+        if marked_boundary == Some(i) {
+            let label = "─ 已完成 ─";
+            let pad = (area.width as usize).saturating_sub(label.width());
+            items.push(
+                ListItem::new(Line::from(vec![Span::styled(
+                    format!("{}{}", label, "─".repeat(pad)),
+                    Style::default().fg(Color::DarkGray),
                 )]))
                 .style(Style::default()),
             );
@@ -307,8 +321,16 @@ fn render_session_list(frame: &mut Frame, app: &mut App, area: Rect) {
             vec![]
         };
 
+        let is_marked = app.marked.contains(&session.name);
+        let done_span = if is_marked {
+            Span::styled("✓ ", Style::default().fg(Color::Green))
+        } else {
+            Span::raw("  ")
+        };
+
         let mut line_spans = vec![
             Span::raw(format!(" {} ", marker)),
+            done_span,
             Span::styled(
                 format!("{:<width$}", display_names[i], width = max_name_len),
                 name_style,
@@ -595,7 +617,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hints = match app.mode {
         Mode::Normal => {
-            "  ? help  jk navigate  l actions  ⏎ switch  n new  K kill  R reload  / filter  q quit"
+            "  ? help  jk navigate  l actions  ⏎ switch  n new  K kill  m mark  R reload  / filter  q quit"
         }
         Mode::ActionMenu => "  jk navigate  ⏎/l select  h/esc back  q quit",
         Mode::Filter { .. } => "  ⏎ apply  esc cancel",

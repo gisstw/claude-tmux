@@ -9,7 +9,7 @@
 mod helpers;
 mod mode;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
@@ -66,6 +66,10 @@ pub struct App {
     /// mtime), keyed by pane ID. `now - this` = how long the session has been
     /// idle, which is what drives the prompt-cache-freshness display.
     last_active: HashMap<String, SystemTime>,
+    /// Name of the currently selected session (used to restore selection after re-sort)
+    pub selected_name: Option<String>,
+    /// Set of session names that have been marked as done
+    pub marked: HashSet<String>,
 }
 
 impl App {
@@ -77,6 +81,21 @@ impl App {
     pub fn new() -> Result<Self> {
         let sessions = Tmux::list_sessions()?;
         let current_session = Tmux::current_session()?;
+
+        let marked = Self::load_marks();
+
+        // Pre-populate idle times so the initial sort matches what tick_status
+        // would produce — prevents the list from jumping on the first render.
+        let mut last_active: HashMap<String, SystemTime> = HashMap::new();
+        for session in &sessions {
+            if let Some(ref pane_id) = session.claude_code_pane {
+                if let Some(pane) = session.panes.iter().find(|p| &p.id == pane_id) {
+                    if let Some(t) = crate::claude_session::last_activity_for_tty(&pane.tty) {
+                        last_active.insert(pane_id.clone(), t);
+                    }
+                }
+            }
+        }
 
         let mut app = Self {
             sessions,
@@ -95,9 +114,24 @@ impl App {
             scroll_state: ScrollState::new(),
             pane_content_cache: HashMap::new(),
             last_status_tick: Instant::now(),
-            last_active: HashMap::new(),
+            last_active,
+            selected_name: None,
+            marked,
         };
 
+        // Start with the cursor on the currently attached session so that
+        // opening the picker lands on where the user already is.
+        if let Some(ref cur) = app.current_session {
+            let filtered = app.filtered_sessions();
+            if let Some(idx) = filtered.iter().position(|s| &s.name == cur) {
+                app.selected = idx;
+                app.selected_name = Some(cur.clone());
+            } else {
+                app.selected_name = filtered.first().map(|s| s.name.clone());
+            }
+        } else {
+            app.selected_name = app.filtered_sessions().first().map(|s| s.name.clone());
+        }
         app.update_preview();
         Ok(app)
     }
@@ -176,6 +210,8 @@ impl App {
 
             self.pane_content_cache.insert(pane_id, content);
         }
+
+        self.sync_selected_from_name();
     }
 
     /// How long the Claude session in `pane_id` has been idle: time since its
@@ -210,6 +246,7 @@ impl App {
                 if self.selected >= self.sessions.len() && !self.sessions.is_empty() {
                     self.selected = self.sessions.len() - 1;
                 }
+                self.sync_selected_from_name();
                 self.update_preview();
                 true
             }
@@ -238,9 +275,17 @@ impl App {
                 })
                 .collect()
         };
-        // Sink sessions idle past the cache window to the bottom group, keeping
-        // the existing attached/name order within each group (stable sort).
-        sessions.sort_by_key(|s| self.needs_recache(s));
+        // Three-level stable sort:
+        // 1. marked sessions sink to bottom
+        // 2. within each group, stale (needs-recache) sessions sink to bottom
+        // 3. within each sub-group, sort by creation time (oldest first) so the
+        //    order is deterministic and unaffected by tmux's "most-recently-used"
+        //    reordering after a client switches sessions.
+        sessions.sort_by_key(|s| {
+            let is_marked = self.marked.contains(&s.name);
+            let is_stale = self.needs_recache(s);
+            (is_marked, is_stale, s.created)
+        });
         sessions
     }
 
@@ -267,6 +312,91 @@ impl App {
         (boundary < filtered.len()).then_some(boundary)
     }
 
+    /// Index of the first marked session in `filtered_sessions`.
+    /// `None` when no session is marked (so no separator row is drawn).
+    pub fn marked_boundary(&self) -> Option<usize> {
+        let filtered = self.filtered_sessions();
+        let boundary = filtered
+            .iter()
+            .take_while(|s| !self.marked.contains(&s.name))
+            .count();
+        (boundary < filtered.len()).then_some(boundary)
+    }
+
+    /// Sync `self.selected` to point at `self.selected_name` after a re-sort.
+    /// If the name is not found, clamp to valid range.
+    pub fn sync_selected_from_name(&mut self) {
+        let filtered = self.filtered_sessions();
+        if filtered.is_empty() {
+            self.selected = 0;
+            return;
+        }
+        if let Some(ref name) = self.selected_name.clone() {
+            if let Some(idx) = filtered.iter().position(|s| &s.name == name) {
+                self.selected = idx;
+                return;
+            }
+        }
+        // Name not found — clamp to valid range
+        if self.selected >= filtered.len() {
+            self.selected = filtered.len() - 1;
+        }
+    }
+
+    /// Toggle the marked state of the currently selected session.
+    pub fn toggle_mark(&mut self) {
+        if let Some(session) = self.selected_session() {
+            let name = session.name.clone();
+            if !self.marked.remove(&name) {
+                self.marked.insert(name);
+            }
+            self.save_marks();
+            // Restore cursor to same session after re-sort
+            self.sync_selected_from_name();
+        }
+    }
+
+    /// Load marked session names from ~/.claude/claude-tmux-marks.json.
+    fn load_marks() -> HashSet<String> {
+        let path = match dirs::home_dir() {
+            Some(h) => h.join(".claude").join("claude-tmux-marks.json"),
+            None => return HashSet::new(),
+        };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return HashSet::new();
+        };
+        // Parse ["name1","name2"] by hand — no serde_json dependency
+        let trimmed = content.trim();
+        if trimmed == "[]" || trimmed.is_empty() {
+            return HashSet::new();
+        }
+        // Strip outer [ ]
+        let inner = trimmed
+            .trim_start_matches('[')
+            .trim_end_matches(']');
+        inner
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    /// Save marked session names to ~/.claude/claude-tmux-marks.json.
+    fn save_marks(&self) {
+        let path = match dirs::home_dir() {
+            Some(h) => h.join(".claude").join("claude-tmux-marks.json"),
+            None => return,
+        };
+        // Build ["name1","name2"] by hand
+        let entries: Vec<String> = self
+            .marked
+            .iter()
+            .map(|n| format!("\"{}\"", n.replace('"', "\\\"")))
+            .collect();
+        let json = format!("[{}]", entries.join(","));
+        let _ = std::fs::write(&path, json);
+    }
+
     /// Get the currently selected session
     pub fn selected_session(&self) -> Option<&Session> {
         let filtered = self.filtered_sessions();
@@ -278,6 +408,7 @@ impl App {
         let count = self.filtered_sessions().len();
         if count > 0 && self.selected > 0 {
             self.selected -= 1;
+            self.selected_name = self.selected_session().map(|s| s.name.clone());
             self.update_preview();
         }
     }
@@ -287,6 +418,7 @@ impl App {
         let count = self.filtered_sessions().len();
         if count > 0 && self.selected < count - 1 {
             self.selected += 1;
+            self.selected_name = self.selected_session().map(|s| s.name.clone());
             self.update_preview();
         }
     }
@@ -626,6 +758,10 @@ impl App {
                 self.mode = Mode::Normal;
             }
             SessionAction::Kill => {
+                // SIGTERM claude process first so it can clean up remote connections
+                if let Some(pane_id) = session.claude_code_pane.clone() {
+                    kill_claude_in_pane(&pane_id);
+                }
                 match Tmux::kill_session(&session_name) {
                     Ok(_) => {
                         self.refresh_sessions();
@@ -640,6 +776,10 @@ impl App {
             }
             SessionAction::KillAndDeleteWorktree => {
                 let worktree_path = session.working_directory.clone();
+                // SIGTERM claude process first
+                if let Some(pane_id) = session.claude_code_pane.clone() {
+                    kill_claude_in_pane(&pane_id);
+                }
                 // First delete the worktree (while session still provides git context)
                 match GitContext::delete_worktree(&worktree_path, false) {
                     Ok(_) => {
@@ -1435,12 +1575,16 @@ impl App {
             }
         };
 
-        // Account for the recache separator row when the selection sits in (or
-        // below) the stale group.
-        match self.recache_boundary() {
-            Some(boundary) if self.selected >= boundary => index + 1,
-            _ => index,
-        }
+        // Account for separator rows (recache and marked) that appear before the selection.
+        let recache_offset = match self.recache_boundary() {
+            Some(boundary) if self.selected >= boundary => 1,
+            _ => 0,
+        };
+        let marked_offset = match self.marked_boundary() {
+            Some(boundary) if self.selected >= boundary => 1,
+            _ => 0,
+        };
+        index + recache_offset + marked_offset
     }
 
     /// Compute the total number of items in the rendered list.
@@ -1485,7 +1629,48 @@ impl App {
             _ => filtered_count,
         };
 
-        // One extra row for the recache separator, when a stale group exists.
-        total + self.recache_boundary().is_some() as usize
+        // One extra row for each separator (recache and marked), when those groups exist.
+        total
+            + self.recache_boundary().is_some() as usize
+            + self.marked_boundary().is_some() as usize
     }
+}
+
+/// Send SIGTERM to the claude process running inside a tmux pane, giving it a
+/// chance to cleanly tear down remote connections before the session is killed.
+fn kill_claude_in_pane(pane_id: &str) {
+    use std::process::Command;
+
+    // Get the shell PID of the pane
+    let Ok(out) = Command::new("tmux")
+        .args(["display-message", "-p", "-t", pane_id, "#{pane_pid}"])
+        .output()
+    else {
+        return;
+    };
+    let shell_pid_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let Ok(shell_pid) = shell_pid_str.parse::<u32>() else {
+        return;
+    };
+
+    // Find child processes of the shell (the claude binary)
+    let Ok(pgrep_out) = Command::new("pgrep")
+        .args(["-P", &shell_pid.to_string()])
+        .output()
+    else {
+        return;
+    };
+
+    for pid_str in String::from_utf8_lossy(&pgrep_out.stdout).split_whitespace() {
+        if let Ok(pid) = pid_str.parse::<u32>() {
+            // SAFETY: kill() is a well-defined POSIX syscall; pid is a valid u32
+            // obtained from pgrep and cast to i32 (both fit in the valid PID range).
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            }
+        }
+    }
+
+    // Give claude up to 500 ms to clean up remote connections
+    std::thread::sleep(std::time::Duration::from_millis(500));
 }
