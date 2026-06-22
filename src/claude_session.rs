@@ -155,7 +155,7 @@ fn last_activity_codex(tty: &str) -> Option<SystemTime> {
 /// Returns the **highest** matching PID (most recently started process), which
 /// is the foreground process (codex/opencode) rather than the parent shell that
 /// also holds the same TTY.
-fn tty_to_pid(tty: &str) -> Option<String> {
+pub fn tty_to_pid(tty: &str) -> Option<String> {
     let mut best: Option<u64> = None;
     for entry in fs::read_dir("/proc").ok()?.flatten() {
         let name = entry.file_name();

@@ -50,6 +50,7 @@ impl Tmux {
                     .iter()
                     .filter_map(|p| {
                         crate::session::ToolType::from_command(&p.current_command)
+                            .or_else(|| crate::session::ToolType::from_tty(&p.tty))
                             .map(|t| (p, t))
                     })
                     .collect();

@@ -60,6 +60,15 @@ impl ToolType {
         }
     }
 
+    /// Fallback: when `#{pane_current_command}` doesn't match (e.g. "node"
+    /// for the codex parent), resolve the highest-PID process on `tty` and
+    /// check its `/proc/<pid>/comm` instead.
+    pub fn from_tty(tty: &str) -> Option<Self> {
+        let pid = crate::claude_session::tty_to_pid(tty)?;
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+        Self::from_command(comm.trim())
+    }
+
     pub fn symbol(&self) -> &'static str {
         match self {
             Self::Claude => "◆",
