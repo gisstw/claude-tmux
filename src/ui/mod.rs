@@ -238,18 +238,17 @@ fn render_session_list(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         let status = &session.claude_code_status;
 
-        // For idle sessions, append how long they have been idle (e.g. "idle 3m").
-        let status_label = if *status == ClaudeCodeStatus::Idle {
-            match session
-                .claude_code_pane
-                .as_deref()
-                .and_then(|id| app.idle_duration(id))
-            {
-                Some(dur) => format!("idle {}", format_idle(dur)),
-                None => status.label().to_string(),
-            }
-        } else {
-            status.label().to_string()
+        // For idle / unknown sessions, append how long they have been idle
+        // (e.g. "idle 3m"). Unknown is the typical status for non-Claude tools
+        // (opencode, codex) whose pane content doesn't match Claude patterns.
+        let idle_dur = session
+            .claude_code_pane
+            .as_deref()
+            .and_then(|id| app.idle_duration(id));
+        let status_label = match (status, idle_dur) {
+            (ClaudeCodeStatus::Idle, Some(dur)) => format!("idle {}", format_idle(dur)),
+            (ClaudeCodeStatus::Unknown, Some(dur)) => format!("idle {}", format_idle(dur)),
+            _ => status.label().to_string(),
         };
 
         // Use brighter colors when selected so text is readable on dark background

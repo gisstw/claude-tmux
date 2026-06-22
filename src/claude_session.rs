@@ -395,11 +395,7 @@ fn last_activity_opencode(cwd: &str) -> Option<SystemTime> {
         return None;
     }
 
-    let conn = rusqlite::Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .ok()?;
+    let conn = rusqlite::Connection::open(&db_path).ok()?;
 
     // Find the most recent message timestamp for any session in this directory.
     let ms: Option<i64> = conn
@@ -551,5 +547,36 @@ mod tests {
         // 2026-06-13 local = somewhere around 1749739844 UTC (±timezone)
         assert!(unix > 1_700_000_000, "parsed time too old: {unix}");
         assert!(unix < 2_000_000_000, "parsed time too far: {unix}");
+    }
+
+    #[test]
+    fn opencode_full_path() {
+        // Direct call simulating what tick_status does for the 'open' session
+        let result = last_activity_for_tty("/dev/pts/10", crate::session::ToolType::OpenCode, "/home/www");
+        eprintln!("last_activity_for_tty(opencode, /home/www): {:?}", result);
+        // If this is None, last_activity_opencode failed — check DB open/query
+        let direct = last_activity_opencode("/home/www");
+        eprintln!("last_activity_opencode directly: {:?}", direct);
+    }
+
+    #[test]
+    fn opencode_db_query() {
+        let db_path = dirs::home_dir().unwrap().join(".local/share/opencode/opencode.db");
+        if !db_path.exists() {
+            eprintln!("SKIP: DB not found at {:?}", db_path);
+            return;
+        }
+        let conn = rusqlite::Connection::open(&db_path);
+        eprintln!("open result: {:?}", conn.as_ref().err());
+        let conn = conn.expect("should open DB");
+
+        let result: rusqlite::Result<Option<i64>> = conn.query_row(
+            "SELECT MAX(m.time_updated) FROM message m JOIN session s ON m.session_id=s.id WHERE s.directory=?1",
+            rusqlite::params!["/home/www"],
+            |row| row.get(0),
+        );
+        eprintln!("query result: {:?}", result);
+        let ms = result.expect("query ok").expect("should have row");
+        assert!(ms > 1_000_000_000_000, "timestamp looks wrong: {ms}");
     }
 }
