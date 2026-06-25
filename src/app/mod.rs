@@ -90,7 +90,12 @@ impl App {
         for session in &sessions {
             if let Some(ref pane_id) = session.claude_code_pane {
                 if let Some(pane) = session.panes.iter().find(|p| &p.id == pane_id) {
-                    if let Some(t) = crate::claude_session::last_activity_for_tty(&pane.tty) {
+                    let cwd = session.working_directory.to_string_lossy();
+                    if let Some(t) = crate::claude_session::last_activity_for_tty(
+                        &pane.tty,
+                        session.tool_type,
+                        &cwd,
+                    ) {
                         last_active.insert(pane_id.clone(), t);
                     }
                 }
@@ -167,9 +172,9 @@ impl App {
         }
         self.last_status_tick = Instant::now();
 
-        // Collect (session_index, pane_id, claude pane tty) first to satisfy the
-        // borrow checker.
-        let targets: Vec<(usize, String, String)> = self
+        // Collect (session_index, pane_id, claude pane tty, tool_type, cwd) first
+        // to satisfy the borrow checker.
+        let targets: Vec<(usize, String, String, crate::session::ToolType, String)> = self
             .sessions
             .iter()
             .enumerate()
@@ -181,11 +186,12 @@ impl App {
                     .find(|p| &p.id == pane_id)
                     .map(|p| p.tty.clone())
                     .unwrap_or_default();
-                Some((i, pane_id.clone(), tty))
+                let cwd = s.working_directory.to_string_lossy().into_owned();
+                Some((i, pane_id.clone(), tty, s.tool_type, cwd))
             })
             .collect();
 
-        for (idx, pane_id, tty) in targets {
+        for (idx, pane_id, tty, tool_type, cwd) in targets {
             let Ok(content) = Tmux::capture_pane(&pane_id, 15, true) else {
                 continue;
             };
@@ -201,10 +207,12 @@ impl App {
 
             self.sessions[idx].claude_code_status = status;
 
-            // Record the session's last-active time (its transcript mtime) so the
-            // UI can show how long it has been idle. Absolute and independent of
-            // when this claude-tmux popup was opened.
-            if let Some(t) = crate::claude_session::last_activity_for_tty(&tty) {
+            // Record the session's last-active time so the UI can show how long
+            // it has been idle. Absolute and independent of when this
+            // claude-tmux popup was opened.
+            if let Some(t) =
+                crate::claude_session::last_activity_for_tty(&tty, tool_type, &cwd)
+            {
                 self.last_active.insert(pane_id.clone(), t);
             }
 

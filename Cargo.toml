@@ -21,3 +21,4 @@ unicode-width = "0.2"
 ansi-to-tui = "7.0"
 git2 = "0.20"
 libc = "0.2"
+rusqlite = { version = "0.32", features = ["bundled"] }
